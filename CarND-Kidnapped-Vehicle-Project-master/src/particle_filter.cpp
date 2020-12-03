@@ -20,7 +20,8 @@
 
 using std::string;
 using std::vector;
-
+using std::normal_distribution;
+using  std::default_random_engine;
 void ParticleFilter::init(double x, double y, double theta, double std[]) {
   /**
    * TODO: Set the number of particles. Initialize all particles to 
@@ -30,13 +31,22 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
    * NOTE: Consult particle_filter.h for more information about this method 
    *   (and others in this file).
    */
-  // Particle::x = x;
-  // y = y;
-  // theta = theta;
-  
-  num_particles = 0;  // TODO: Set the number of particles
+  num_particles = 100;
+  default_random_engine gen;
+  normal_distribution<double> dist_x(x, std[0]);
+  normal_distribution<double> dist_y(y, std[1]);
+  normal_distribution<double> dist_theta(theta, std[2]);
 
-
+  for(int i = 0; i< num_particles; ++i)
+  {
+    Particle particle;
+    particle.x = dist_x(gen);
+    particle.y = dist_y(gen);
+    particle.theta = dist_theta(gen);
+    particle.weight = 1;
+    particles[i] = particle;
+  }
+  // num_particles = 0;  // TODO: Set the number of particles
 }
 
 void ParticleFilter::prediction(double delta_t, double std_pos[], 
@@ -48,7 +58,22 @@ void ParticleFilter::prediction(double delta_t, double std_pos[],
    *  http://en.cppreference.com/w/cpp/numeric/random/normal_distribution
    *  http://www.cplusplus.com/reference/random/default_random_engine/
    */
+  default_random_engine gen;  
+  for(int i = 0; i < num_particles; i++)
+  {
+    double x  = particles[i].x + velocity*(sin(particles[i].theta + yaw_rate*delta_t) - sin(particles[i].theta))/yaw_rate;
+    double y = particles[i].y + velocity*(-cos(particles[i].theta + yaw_rate*delta_t) + cos(particles[i].theta))/yaw_rate;
+    double theta = particles[i].theta + yaw_rate*delta_t;
 
+    normal_distribution<double> dist_x(x, std_pos[0]);
+    normal_distribution<double> dist_y(y, std_pos[1]);
+    normal_distribution<double> dist_theta(theta, std_pos[2]);
+
+    particles[i].x = dist_x(gen);
+    particles[i].y = dist_y(gen);
+    particles[i].theta = dist_theta(gen);
+
+  }
 }
 
 void ParticleFilter::dataAssociation(vector<LandmarkObs> predicted, 
@@ -61,6 +86,20 @@ void ParticleFilter::dataAssociation(vector<LandmarkObs> predicted,
    *   probably find it useful to implement this method and use it as a helper 
    *   during the updateWeights phase.
    */
+  for(auto obs : observations)
+  {
+    double alpha{-1};
+    double alpha2{-1};
+    for(auto pred : predicted)
+    {
+      alpha = dist(obs.x,obs.y,pred.x, pred.y);
+      if(alpha < alpha2 || alpha2 == -1)
+      {
+        alpha2= alpha;
+        pred.id = obs.id;
+      }
+    }
+  }
 
 }
 
@@ -80,6 +119,66 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
    *   and the following is a good resource for the actual equation to implement
    *   (look at equation 3.33) http://planning.cs.uiuc.edu/node99.html
    */
+  double weight_normalizer = 0;
+  double gaussian_normalizer = 1/(2 * M_PI * std_landmark[0] * std_landmark[1]);
+
+  for(int i = 0; i < num_particles; i ++)
+ {
+   double part_x = particles[i].x;
+   double part_y = particles[i].y;
+   double part_theta = particles[i].theta;
+
+  vector<LandmarkObs> transform;
+   for(auto obs : observations)
+   {
+     LandmarkObs trans;
+     trans.id = obs.id;
+     trans.x = part_x + obs.x*cos(part_theta) - obs.y*sin(part_theta);
+     trans.y = part_y + obs.x*sin(part_theta) - obs.y*cos(part_theta);
+     transform.push_back(trans);
+
+   }
+
+   vector<LandmarkObs> range_landmarks;
+
+   for(auto landmark : map_landmarks.landmark_list)
+   {
+     if(dist(part_x, part_y,landmark.x_f, landmark.y_f) < sensor_range) 
+     {
+       range_landmarks.push_back(LandmarkObs {landmark.id_i, landmark.x_f, landmark.y_f});
+     }
+
+   }
+   int k = 0;
+   double x_term;
+   double y_term;
+   for(auto trans : transform)
+   {
+     k += 1;
+     for(auto land : range_landmarks)
+     {
+       if(land.id == trans.id)
+       {
+         x_term = pow(trans.x - land.x,2) / (2*pow(std_landmark[0],2));
+         y_term = pow(trans.y - land.y,2) / (2*pow(std_landmark[1],2));
+         particles[i].weight *= gaussian_normalizer*exp(-(x_term + y_term));
+         
+       }
+
+     }
+     weights[k] = gaussian_normalizer*exp(-(x_term + y_term));
+
+   }
+   weight_normalizer += particles[i].weight;
+
+   for(int i = 0; i < particles.size(); i++)
+   {
+     particles[i].weight /= weight_normalizer;
+     weights[i] = particles[i].weight;
+   }
+
+ }
+
 
 }
 
